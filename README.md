@@ -29,7 +29,7 @@ The search will take from a few hours to a few days, depending on the speed of
 and complexity of your processor.  When it is complete, summarize the results:
 
 ```
-./summarize.py data/log
+./sifter-summarize.py log {log_file}
 ```
 
 ![demo_summarizer](references/summarizer.png)
@@ -69,7 +69,8 @@ Details of the results can be found in the project
 ### Building
 
 Sandsifter requires first installing the Capstone disassembler:
-http://www.capstone-engine.org/.  Capstone can typically be installed with:
+http://www.capstone-engine.org/.  
+Capstone can typically be installed with:
 
 ```
 sudo apt-get install libcapstone3 libcapstone-dev
@@ -132,6 +133,9 @@ Sifter flags:
 
 --low-mem
 	do not store results in memory
+
+--out
+    explicitly specify folder path to write sandsifter log files
 ```
 
 Injector flags:
@@ -257,14 +261,14 @@ command line, or cycled via hotkeys.
 	graphical front end.  This can be done by running the injector directly:
 
 	```
-	sudo ./injector -P1 -t -0
+	sudo ./sifter-injector -P1 -t -0
 	```
 
 	To filter the results of a direct injector invocation, grep can be used.
 	For example,
 
 	```
-	sudo ./injector -P1 -r -0 | grep '\.r' | grep -v sigill
+	sudo ./sifter-injector -P1 -r -0 | grep '\.r' | grep -v sigill
 	```
 
 	searches for instructions for which the processor and disassembler disagreed
@@ -330,3 +334,4 @@ command line, or cycled via hotkeys.
 sandsifter is a research effort from Christopher Domas
 ([@xoreaxeaxeax](https://twitter.com/xoreaxeaxeax)).
 
+ 

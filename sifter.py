@@ -1,13 +1,14 @@
-#!/usr/bin/python
-
+#!/usr/bin/env python2
+#^ Force python2 for now
 # instruction injector frontend
 
 #
 # github.com/xoreaxeaxeax/sandsifter // domas // @xoreaxeaxeax
 #
 
-# run as sudo for best results
+# run as sudo for best resultsi
 
+from __future__ import print_function
 import signal
 import sys
 import subprocess
@@ -26,15 +27,24 @@ import argparse
 import code
 import copy
 from ctypes import *
+import platform
 
-INJECTOR = "./injector"
+try:
+    raw_input          # Python 2
+except NameError:
+    raw_input = input  # Python 3
+
+__version__ = '1.03'
+
+INJECTOR = ["/usr/sbin/sifter-injector", "/usr/local/sbin/sifter-injector", "./sifter-injector"]
 arch = ""
 
-OUTPUT = "./data/"
-LOG  = OUTPUT + "log"
-SYNC = OUTPUT + "sync"
-TICK = OUTPUT + "tick"
-LAST = OUTPUT + "last"
+# Set default output path to $USER_HOME/.local/share/sandsifter, this works safely for root(sudo) and normal accounts
+OUTPUT = os.path.expanduser('~%s/.local/share/sandsifter' % os.environ.get('SUDO_USER', ''))
+LOG  = os.path.join(OUTPUT, 'log')
+SYNC = os.path.join(OUTPUT, 'sync')
+TICK = os.path.join(OUTPUT, 'tick')
+LAST = os.path.join(OUTPUT, 'last')
 
 class ThreadState:
     pause = False
@@ -193,7 +203,11 @@ def cstr2py(s):
 
 # targeting python 2.6 support
 def int_to_comma(x):
-    if type(x) not in [type(0), type(0L)]:
+    try:
+        eval('zero_long = 0L')
+    except SyntaxError:
+        zero_long = 0
+    if type(x) not in (type(0), type(zero_long)):
         raise TypeError("Parameter must be an integer.")
     if x < 0:
         return '-' + int_to_comma(-x)
@@ -202,6 +216,21 @@ def int_to_comma(x):
         x, r = divmod(x, 1000)
         result = ",%03d%s" % (r, result)
     return "%d%s" % (x, result)
+
+# Validate if log files already exist in the specified path and return a handle if safe to write
+def is_valid_write_path(parser, arg):
+    arg = os.path.abspath(arg)
+    if os.path.exists(arg) and os.path.isdir(arg):
+        data_files = ["log", "sync", "tick", "last"]
+        files_exist = [f for f in data_files if os.path.isfile(os.path.join(arg, f))]
+        files_not_exist = list(set(files_exist) ^ set(data_files))
+        if not files_exist:
+            print("info: No pre-existing files, writing logs to: %s" % os.path.abspath(arg))
+            return arg
+        else:
+             parser.error("warning: Prexisting log files in %s\n\tChoose a different path or choose to move or overwrite them." % arg)
+    else:
+        parser.error("warning: The path %s doesn't exist!\n\tChoose a different output path or create it." % arg)
 
 def result_string(insn, result):
     s = "%30s %2d %2d %2d %2d (%s)\n" % (
@@ -679,7 +708,10 @@ class Gui:
             time.sleep(self.TIME_SLICE)
 
 def get_cpu_info():
-    with open("/proc/cpuinfo", "r") as f:
+    cpu_path = "/proc/cpuinfo"
+    if platform.system == "FreeBSD":
+        cpu_path = "/compat/linux%s" % cpu_path
+    with open(cpu_path, "r") as f:
         cpu = [l.strip() for l in f.readlines()[:7]]
     return cpu
 
@@ -737,7 +769,7 @@ def cleanup(gui, poll, injector, ts, tests, command_line, args):
     sys.exit(0)
 
 def main():
-    global arch
+    global arch, OUTPUT, LOG, SYNC, TICK, LAST, INJECTOR
     def exit_handler(signal, frame):
         cleanup(gui, poll, injector, ts, tests, command_line, args)
 
@@ -746,6 +778,20 @@ def main():
     gui = None
 
     command_line = " ".join(sys.argv)
+    
+    # Find valid injector binary
+    INJECTOR = [f for f in INJECTOR if os.access(f, os.X_OK)]
+    
+    # Check if list empty
+    if not INJECTOR:
+        print("error: No executable injector was found. Program will exit");
+        sys.exit(1)
+    else:
+        # Pick the first valid injector entry, this is not ideal but it should work fine
+        INJECTOR = INJECTOR[0]
+        print("Using injector from: %s" % INJECTOR)
+        print("Injector BuildID: %s" % subprocess.check_output(['eu-readelf', '-n', INJECTOR]).split()[-1])
+        
 
     parser = argparse.ArgumentParser()
     parser.add_argument("--len", action="store_true", default=False,
@@ -781,20 +827,40 @@ def main():
     parser.add_argument("--low-mem", action="store_true", default=False,
             help="do not store results in memory"
             )
+    parser.add_argument("--out", dest="logpath", required=False,
+            help="folder path to write sandsifter log files", metavar="FOLDER",
+            type=lambda out: is_valid_write_path(parser, out)
+            )
+    parser.add_argument("--version", action="version", version="Sandsifter %(prog)s V" + str(__version__) )
+    
     parser.add_argument("injector_args", nargs=argparse.REMAINDER)
 
     args = parser.parse_args()
 
     injector_args = args.injector_args
     if "--" in injector_args: injector_args.remove("--")
-
+    
     if not args.len and not args.unk and not args.dis and not args.ill:
-        print "warning: no search type (--len, --unk, --dis, --ill) specified, results will not be recorded."
+        print("warning: no search type (--len, --unk, --dis, --ill) specified, results will not be recorded.")
         raw_input()
-
+        
+    if args.logpath:
+        OUTPUT = args.logpath
+        LOG  = os.path.join(OUTPUT, "log")
+        SYNC = os.path.join(OUTPUT, "sync")
+        TICK = os.path.join(OUTPUT, "tick")
+        LAST = os.path.join(OUTPUT, "last")
+    else:
+	print("warning: no log output path (--out) specified, results will be recorded to %s \nManualy specify a (--out) output path if you want your results recorded elsewhere." % OUTPUT)
+        # Wait to show message to user.
+        time.sleep(3)
+        # Create /tmp directory if it does not exist already, here we use much less strict checks.
+        if not os.path.exists(OUTPUT):
+            os.makedirs(OUTPUT)
+        
     if args.resume:
         if "-i" in injector_args:
-            print "--resume is incompatible with -i"
+            print("--resume is incompatible with -i")
             sys.exit(1)
 
         if os.path.exists(LAST):
@@ -802,11 +868,10 @@ def main():
                 insn = f.read()
                 injector_args.extend(['-i',insn])
         else:
-            print "no resume file found"
+            print("error: no 'last' resume file found in path %s" % OUTPUT)
             sys.exit(1)
 
-    if not os.path.exists(OUTPUT):
-        os.makedirs(OUTPUT)
+
 
     injector_bitness, errors = \
         subprocess.Popen(
